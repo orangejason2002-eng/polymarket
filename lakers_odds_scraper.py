@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""Fetch and resample Polymarket Lakers game odds history.
+
+This script is intentionally dependency-free (stdlib only) so it can run in
+minimal environments. You may need to adjust the API endpoints via CLI flags
+if Polymarket changes their public endpoints or requires a specific path.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import dataclasses
+import datetime as dt
+import json
+import math
+import os
+import sys
+import time
+import urllib.parse
+import urllib.request
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+
+DEFAULT_BASE_URL = "https://gamma-api.polymarket.com"
+DEFAULT_MARKETS_PATH = "/markets"
+DEFAULT_HISTORY_TEMPLATE = "/markets/{market_id}/history"
+
+
+@dataclasses.dataclass
+class Market:
+    id: str
+    slug: str
+    title: str
+    status: str
+    close_time: Optional[str]
+    raw: Dict[str, Any]
+
+
+@dataclasses.dataclass
+class PriceSample:
+    timestamp: float
+    price: float
+
+
+def _log(message: str) -> None:
+    sys.stderr.write(message + "\n")
+
+
+def fetch_json(url: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    if params:
+        query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+        url = f"{url}?{query}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "polymarket-odds-scraper/1.0",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as response:
+        payload = response.read().decode("utf-8")
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"Non-JSON response from {url}: {payload[:200]}")
+
+
+def normalize_market(item: Dict[str, Any]) -> Market:
+    return Market(
+        id=str(item.get("id") or item.get("market_id") or item.get("conditionId") or ""),
+        slug=str(item.get("slug") or ""),
+        title=str(item.get("title") or item.get("question") or ""),
+        status=str(item.get("status") or item.get("state") or item.get("resolved") or ""),
+        close_time=item.get("closeTime") or item.get("endDate") or item.get("end_date"),
+        raw=item,
+    )
+
+
+def iter_markets(
+    base_url: str,
+    markets_path: str,
+    search: str,
+    resolved_only: bool,
+    page_size: int,
+    max_pages: int,
+) -> Iterable[Market]:
+    page = 0
+    next_cursor: Optional[str] = None
+    while True:
+        params: Dict[str, Any] = {
+            "limit": page_size,
+            "search": search,
+        }
+        if resolved_only:
+            params["closed"] = True
+        if next_cursor:
+            params["cursor"] = next_cursor
+        url = urllib.parse.urljoin(base_url, markets_path)
+        payload = fetch_json(url, params=params)
+
+        data = payload.get("data") if isinstance(payload, dict) else payload
+        if not data:
+            break
+        for item in data:
+            market = normalize_market(item)
+            if market.id and market.title:
+                yield market
+
+        next_cursor = payload.get("nextCursor") if isinstance(payload, dict) else None
+        page += 1
+        if max_pages and page >= max_pages:
+            break
+        if not next_cursor:
+            break
+
+
+def parse_timestamp(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not math.isnan(float(value)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            pass
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+            "%Y-%m-%dT%H:%M:%SZ",
+            "%Y-%m-%d %H:%M:%S",
+        ):
+            try:
+                return dt.datetime.strptime(value, fmt).replace(tzinfo=dt.timezone.utc).timestamp()
+            except ValueError:
+                continue
+    return None
+
+
+def extract_samples(payload: Any) -> List[PriceSample]:
+    data = payload.get("data") if isinstance(payload, dict) else payload
+    if not isinstance(data, list):
+        return []
+
+    samples: List[PriceSample] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        timestamp = parse_timestamp(
+            item.get("timestamp")
+            or item.get("time")
+            or item.get("createdAt")
+            or item.get("blockTimestamp")
+        )
+        price = (
+            item.get("price")
+            or item.get("probability")
+            or item.get("p")
+            or item.get("value")
+        )
+        if timestamp is None or price is None:
+            continue
+        try:
+            price_value = float(price)
+        except (TypeError, ValueError):
+            continue
+        samples.append(PriceSample(timestamp=timestamp, price=price_value))
+
+    samples.sort(key=lambda s: s.timestamp)
+    return samples
+
+
+def resample(samples: List[PriceSample], interval_seconds: int) -> List[PriceSample]:
+    if not samples:
+        return []
+    buckets: Dict[int, PriceSample] = {}
+    for sample in samples:
+        bucket = int(sample.timestamp // interval_seconds) * interval_seconds
+        buckets[bucket] = sample
+    resampled = [PriceSample(timestamp=ts, price=buckets[ts].price) for ts in sorted(buckets)]
+    return resampled
+
+
+def write_csv(path: str, samples: List[PriceSample]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["timestamp", "iso_time", "price"])
+        for sample in samples:
+            iso_time = dt.datetime.fromtimestamp(sample.timestamp, tz=dt.timezone.utc).isoformat()
+            writer.writerow([int(sample.timestamp), iso_time, f"{sample.price:.6f}"])
+
+
+def sanitize_filename(value: str) -> str:
+    keep = [c if c.isalnum() or c in ("-", "_") else "-" for c in value.lower()]
+    return "".join(keep).strip("-") or "market"
+
+
+def build_history_url(base_url: str, template: str, market_id: str) -> str:
+    path = template.format(market_id=market_id)
+    return urllib.parse.urljoin(base_url, path)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Fetch completed Lakers games and resample odds history.",
+    )
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Polymarket API base URL")
+    parser.add_argument("--markets-path", default=DEFAULT_MARKETS_PATH, help="Markets endpoint path")
+    parser.add_argument(
+        "--history-template",
+        default=DEFAULT_HISTORY_TEMPLATE,
+        help="History endpoint template (use {market_id})",
+    )
+    parser.add_argument("--search", default="Lakers", help="Search query for markets")
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=10,
+        help="Resample interval in seconds (default: 10)",
+    )
+    parser.add_argument("--output-dir", default="output", help="Output directory for CSV files")
+    parser.add_argument("--page-size", type=int, default=100, help="Markets page size")
+    parser.add_argument("--max-pages", type=int, default=0, help="Max pages to fetch (0=all)")
+    parser.add_argument(
+        "--resolved-only",
+        action="store_true",
+        default=True,
+        help="Only fetch resolved/closed markets",
+    )
+    parser.add_argument(
+        "--sleep",
+        type=float,
+        default=0.25,
+        help="Delay between history requests (seconds)",
+    )
+    args = parser.parse_args()
+
+    markets = list(
+        iter_markets(
+            base_url=args.base_url,
+            markets_path=args.markets_path,
+            search=args.search,
+            resolved_only=args.resolved_only,
+            page_size=args.page_size,
+            max_pages=args.max_pages,
+        )
+    )
+    if not markets:
+        _log("No markets found. Try adjusting --search or endpoint settings.")
+        return 1
+
+    _log(f"Found {len(markets)} markets. Fetching history...")
+    for market in markets:
+        history_url = build_history_url(args.base_url, args.history_template, market.id)
+        try:
+            history_payload = fetch_json(history_url)
+        except Exception as exc:
+            _log(f"Failed to fetch history for {market.title} ({market.id}): {exc}")
+            continue
+        samples = extract_samples(history_payload)
+        resampled = resample(samples, args.interval)
+        filename = sanitize_filename(f"{market.title}-{market.id}")
+        path = os.path.join(args.output_dir, f"{filename}.csv")
+        write_csv(path, resampled)
+        _log(f"Saved {len(resampled)} samples to {path}")
+        if args.sleep:
+            time.sleep(args.sleep)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
