@@ -27,3 +27,13 @@ python lakers_odds_scraper.py \
   --history-template "/custom/markets/{market_id}/history" \
   --interval 5
 ```
+
+## Testing
+
+This repo uses `pytest`. Unit tests run without network access. Live Polymarket
+API checks are optional and skipped by default. To run them locally, set the
+environment variable below:
+
+```bash
+POLYMARKET_LIVE_TESTS=1 pytest -m live
+```
