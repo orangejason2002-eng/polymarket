@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Fetch and resample Polymarket Lakers game odds history.
+"""Fetch and resample Kalshi Lakers game odds history.
 
 This script is intentionally dependency-free (stdlib only) so it can run in
 minimal environments. You may need to adjust the API endpoints via CLI flags
-if Polymarket changes their public endpoints or requires a specific path.
+if Kalshi changes their public endpoints or requires a specific path.
 """
 
 from __future__ import annotations
@@ -22,9 +22,10 @@ import urllib.request
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
-DEFAULT_BASE_URL = "https://gamma-api.polymarket.com"
-DEFAULT_MARKETS_PATH = "/markets"
-DEFAULT_HISTORY_TEMPLATE = "/markets/{market_id}/history"
+DEFAULT_BASE_URL = "https://exchange-api.kalshi.com"
+DEFAULT_MARKETS_PATH = "/trade-api/v2/markets"
+DEFAULT_HISTORY_TEMPLATE = "/trade-api/v2/markets/{market_id}/trades"
+DEFAULT_STATUS_PATH = "/trade-api/v2/exchange/status"
 
 
 @dataclasses.dataclass
@@ -54,7 +55,7 @@ def fetch_json(url: str, params: Optional[Dict[str, Any]] = None) -> Any:
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "polymarket-odds-scraper/1.0",
+            "User-Agent": "kalshi-odds-scraper/1.0",
             "Accept": "application/json",
         },
     )
@@ -68,11 +69,17 @@ def fetch_json(url: str, params: Optional[Dict[str, Any]] = None) -> Any:
 
 def normalize_market(item: Dict[str, Any]) -> Market:
     return Market(
-        id=str(item.get("id") or item.get("market_id") or item.get("conditionId") or ""),
-        slug=str(item.get("slug") or ""),
-        title=str(item.get("title") or item.get("question") or ""),
+        id=str(item.get("ticker") or item.get("id") or item.get("market_id") or item.get("conditionId") or ""),
+        slug=str(item.get("slug") or item.get("ticker") or ""),
+        title=str(
+            item.get("title")
+            or item.get("question")
+            or item.get("event_title")
+            or item.get("eventTitle")
+            or ""
+        ),
         status=str(item.get("status") or item.get("state") or item.get("resolved") or ""),
-        close_time=item.get("closeTime") or item.get("endDate") or item.get("end_date"),
+        close_time=item.get("close_time") or item.get("closeTime") or item.get("endDate") or item.get("end_date"),
         raw=item,
     )
 
@@ -125,6 +132,13 @@ def parse_timestamp(value: Any) -> Optional[float]:
             return float(value)
         except ValueError:
             pass
+        try:
+            parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=dt.timezone.utc)
+            return parsed.timestamp()
+        except ValueError:
+            pass
         for fmt in (
             "%Y-%m-%dT%H:%M:%S.%fZ",
             "%Y-%m-%dT%H:%M:%SZ",
@@ -151,12 +165,17 @@ def extract_samples(payload: Any) -> List[PriceSample]:
             or item.get("time")
             or item.get("createdAt")
             or item.get("blockTimestamp")
+            or item.get("created_time")
+            or item.get("created_time_seconds")
         )
         price = (
             item.get("price")
             or item.get("probability")
             or item.get("p")
             or item.get("value")
+            or item.get("yes_price")
+            or item.get("no_price")
+            or item.get("trade_price")
         )
         if timestamp is None or price is None:
             continue
@@ -347,7 +366,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Fetch completed Lakers games and resample odds history.",
     )
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Polymarket API base URL")
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Kalshi API base URL")
     parser.add_argument("--markets-path", default=DEFAULT_MARKETS_PATH, help="Markets endpoint path")
     parser.add_argument(
         "--history-template",

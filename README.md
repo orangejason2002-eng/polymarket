@@ -1,9 +1,9 @@
 # polymarket
-Capture Lakers game win probability history from Polymarket.
+Capture Lakers game win probability history from Kalshi.
 
 ## Usage
 
-The script is dependency-free and expects Polymarket API endpoints to be
+The script is dependency-free and expects Kalshi API endpoints to be
 reachable. If the default endpoints require a different path or parameters,
 override them via CLI flags.
 
@@ -13,9 +13,9 @@ python lakers_odds_scraper.py --search "Lakers" --interval 10 --output-dir outpu
 
 ### Common adjustments
 
-* `--base-url`: API host (default: https://gamma-api.polymarket.com)
-* `--markets-path`: markets listing path (default: /markets)
-* `--history-template`: odds history path (default: /markets/{market_id}/history)
+* `--base-url`: API host (default: https://exchange-api.kalshi.com)
+* `--markets-path`: markets listing path (default: /trade-api/v2/markets)
+* `--history-template`: odds history path (default: /trade-api/v2/markets/{market_id}/trades)
 * `--interval`: resample interval in seconds (default: 10)
 * `--no-svg`: disable SVG win-probability chart output
 * `--no-html`: disable interactive HTML chart output with hover tooltips
@@ -24,18 +24,18 @@ Example with custom endpoints:
 
 ```bash
 python lakers_odds_scraper.py \
-  --base-url "https://example.polymarket.com" \
+  --base-url "https://example.kalshi.com" \
   --markets-path "/custom/markets" \
-  --history-template "/custom/markets/{market_id}/history" \
+  --history-template "/custom/markets/{market_id}/trades" \
   --interval 5
 ```
 
 ## Testing
 
-This repo uses `pytest`. Unit tests run without network access. Live Polymarket
+This repo uses `pytest`. Unit tests run without network access. Live Kalshi
 API checks are optional and skipped by default. To run them locally, set the
 environment variable below:
 
 ```bash
-POLYMARKET_LIVE_TESTS=1 pytest -m live
+KALSHI_LIVE_TESTS=1 pytest -m live
 ```
