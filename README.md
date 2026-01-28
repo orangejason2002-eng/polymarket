@@ -17,7 +17,6 @@ python lakers_odds_scraper.py --search "Lakers" --interval 10 --output-dir outpu
 * `--markets-path`: markets listing path (default: /markets)
 * `--history-template`: odds history path (default: /markets/{market_id}/history)
 * `--interval`: resample interval in seconds (default: 10)
-* `--no-svg`: disable SVG win-probability chart output
 
 Example with custom endpoints:
 

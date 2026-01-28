@@ -191,46 +191,6 @@ def write_csv(path: str, samples: List[PriceSample]) -> None:
             writer.writerow([int(sample.timestamp), iso_time, f"{sample.price:.6f}"])
 
 
-def write_svg(path: str, samples: List[PriceSample], title: str) -> None:
-    if not samples:
-        return
-    width = 960
-    height = 320
-    padding = 50
-    min_ts = samples[0].timestamp
-    max_ts = samples[-1].timestamp
-    if max_ts == min_ts:
-        max_ts += 1
-
-    def x_for(ts: float) -> float:
-        return padding + (ts - min_ts) / (max_ts - min_ts) * (width - 2 * padding)
-
-    def y_for(price: float) -> float:
-        clamped = max(0.0, min(1.0, price))
-        return height - padding - clamped * (height - 2 * padding)
-
-    points = " ".join(f"{x_for(s.timestamp):.2f},{y_for(s.price):.2f}" for s in samples)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(
-            "\n".join(
-                [
-                    f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
-                    f'<rect width="100%" height="100%" fill="#ffffff"/>',
-                    f'<text x="{padding}" y="24" font-size="16" font-family="Arial">{title}</text>',
-                    f'<line x1="{padding}" y1="{height - padding}" x2="{width - padding}" y2="{height - padding}" stroke="#cccccc"/>',
-                    f'<line x1="{padding}" y1="{padding}" x2="{padding}" y2="{height - padding}" stroke="#cccccc"/>',
-                    f'<polyline fill="none" stroke="#0b5fff" stroke-width="2" points="{points}"/>',
-                    f'<text x="{padding}" y="{height - padding + 24}" font-size="12" font-family="Arial">start</text>',
-                    f'<text x="{width - padding}" y="{height - padding + 24}" font-size="12" text-anchor="end" font-family="Arial">end</text>',
-                    f'<text x="{padding - 8}" y="{padding}" font-size="12" text-anchor="end" font-family="Arial">100%</text>',
-                    f'<text x="{padding - 8}" y="{height - padding}" font-size="12" text-anchor="end" font-family="Arial">0%</text>',
-                    "</svg>",
-                ]
-            )
-        )
-
-
 def sanitize_filename(value: str) -> str:
     keep = [c if c.isalnum() or c in ("-", "_") else "-" for c in value.lower()]
     return "".join(keep).strip("-") or "market"
