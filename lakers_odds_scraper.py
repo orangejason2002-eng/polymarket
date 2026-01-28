@@ -234,6 +234,13 @@ def main() -> int:
         default=0.25,
         help="Delay between history requests (seconds)",
     )
+    parser.add_argument(
+        "--no-svg",
+        dest="write_svg",
+        action="store_false",
+        default=True,
+        help="Disable SVG chart output.",
+    )
     args = parser.parse_args()
 
     markets = list(
@@ -264,6 +271,10 @@ def main() -> int:
         path = os.path.join(args.output_dir, f"{filename}.csv")
         write_csv(path, resampled)
         _log(f"Saved {len(resampled)} samples to {path}")
+        if args.write_svg:
+            svg_path = os.path.join(args.output_dir, f"{filename}.svg")
+            write_svg(svg_path, resampled, market.title)
+            _log(f"Saved SVG chart to {svg_path}")
         if args.sleep:
             time.sleep(args.sleep)
 
