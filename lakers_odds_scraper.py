@@ -191,6 +191,148 @@ def write_csv(path: str, samples: List[PriceSample]) -> None:
             writer.writerow([int(sample.timestamp), iso_time, f"{sample.price:.6f}"])
 
 
+def write_svg(path: str, samples: List[PriceSample], title: str) -> None:
+    if not samples:
+        return
+    width = 960
+    height = 320
+    padding = 50
+    min_ts = samples[0].timestamp
+    max_ts = samples[-1].timestamp
+    if max_ts == min_ts:
+        max_ts += 1
+
+    def x_for(ts: float) -> float:
+        return padding + (ts - min_ts) / (max_ts - min_ts) * (width - 2 * padding)
+
+    def y_for(price: float) -> float:
+        clamped = max(0.0, min(1.0, price))
+        return height - padding - clamped * (height - 2 * padding)
+
+    points = " ".join(f"{x_for(s.timestamp):.2f},{y_for(s.price):.2f}" for s in samples)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(
+            "\n".join(
+                [
+                    f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
+                    f'<rect width="100%" height="100%" fill="#ffffff"/>',
+                    f'<text x="{padding}" y="24" font-size="16" font-family="Arial">{title}</text>',
+                    f'<line x1="{padding}" y1="{height - padding}" x2="{width - padding}" y2="{height - padding}" stroke="#cccccc"/>',
+                    f'<line x1="{padding}" y1="{padding}" x2="{padding}" y2="{height - padding}" stroke="#cccccc"/>',
+                    f'<polyline fill="none" stroke="#0b5fff" stroke-width="2" points="{points}"/>',
+                    f'<text x="{padding}" y="{height - padding + 24}" font-size="12" font-family="Arial">start</text>',
+                    f'<text x="{width - padding}" y="{height - padding + 24}" font-size="12" text-anchor="end" font-family="Arial">end</text>',
+                    f'<text x="{padding - 8}" y="{padding}" font-size="12" text-anchor="end" font-family="Arial">100%</text>',
+                    f'<text x="{padding - 8}" y="{height - padding}" font-size="12" text-anchor="end" font-family="Arial">0%</text>',
+                    "</svg>",
+                ]
+            )
+        )
+
+
+def write_html(path: str, samples: List[PriceSample], title: str) -> None:
+    if not samples:
+        return
+    width = 960
+    height = 320
+    padding = 50
+    min_ts = samples[0].timestamp
+    max_ts = samples[-1].timestamp
+    if max_ts == min_ts:
+        max_ts += 1
+
+    def x_for(ts: float) -> float:
+        return padding + (ts - min_ts) / (max_ts - min_ts) * (width - 2 * padding)
+
+    def y_for(price: float) -> float:
+        clamped = max(0.0, min(1.0, price))
+        return height - padding - clamped * (height - 2 * padding)
+
+    points = [
+        [int(s.timestamp), round(s.price, 6), round(x_for(s.timestamp), 2), round(y_for(s.price), 2)]
+        for s in samples
+    ]
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(
+            f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{title} win probability</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; }}
+    #chart {{ position: relative; width: {width}px; }}
+    #tooltip {{
+      position: absolute;
+      background: rgba(0,0,0,0.8);
+      color: #fff;
+      padding: 6px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      pointer-events: none;
+      display: none;
+      transform: translate(-50%, -120%);
+    }}
+  </style>
+</head>
+<body>
+  <h3>{title}</h3>
+  <div id="chart">
+    <svg id="svg" xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">
+      <rect width="100%" height="100%" fill="#ffffff"></rect>
+      <line x1="{padding}" y1="{height - padding}" x2="{width - padding}" y2="{height - padding}" stroke="#cccccc"></line>
+      <line x1="{padding}" y1="{padding}" x2="{padding}" y2="{height - padding}" stroke="#cccccc"></line>
+      <polyline id="line" fill="none" stroke="#0b5fff" stroke-width="2"></polyline>
+      <circle id="cursor" r="4" fill="#0b5fff"></circle>
+    </svg>
+    <div id="tooltip"></div>
+  </div>
+  <script>
+    const data = {json.dumps(points)};
+    const svg = document.getElementById('svg');
+    const line = document.getElementById('line');
+    const cursor = document.getElementById('cursor');
+    const tooltip = document.getElementById('tooltip');
+    line.setAttribute('points', data.map(d => `${{d[2]}},${{d[3]}}`).join(' '));
+
+    function findNearest(x) {{
+      let best = data[0];
+      let min = Math.abs(x - best[2]);
+      for (const d of data) {{
+        const dist = Math.abs(x - d[2]);
+        if (dist < min) {{
+          min = dist;
+          best = d;
+        }}
+      }}
+      return best;
+    }}
+
+    svg.addEventListener('mousemove', (event) => {{
+      const rect = svg.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const nearest = findNearest(x);
+      cursor.setAttribute('cx', nearest[2]);
+      cursor.setAttribute('cy', nearest[3]);
+      tooltip.style.left = `${{nearest[2]}}px`;
+      tooltip.style.top = `${{nearest[3]}}px`;
+      const date = new Date(nearest[0] * 1000).toISOString();
+      tooltip.textContent = `${{date}} | ${{(nearest[1] * 100).toFixed(2)}}%`;
+      tooltip.style.display = 'block';
+    }});
+
+    svg.addEventListener('mouseleave', () => {{
+      tooltip.style.display = 'none';
+    }});
+  </script>
+</body>
+</html>
+"""
+        )
+
+
 def sanitize_filename(value: str) -> str:
     keep = [c if c.isalnum() or c in ("-", "_") else "-" for c in value.lower()]
     return "".join(keep).strip("-") or "market"
@@ -234,6 +376,20 @@ def main() -> int:
         default=0.25,
         help="Delay between history requests (seconds)",
     )
+    parser.add_argument(
+        "--no-svg",
+        dest="write_svg",
+        action="store_false",
+        default=True,
+        help="Disable SVG chart output.",
+    )
+    parser.add_argument(
+        "--no-html",
+        dest="write_html",
+        action="store_false",
+        default=True,
+        help="Disable HTML chart output with hover tooltips.",
+    )
     args = parser.parse_args()
 
     markets = list(
@@ -264,6 +420,14 @@ def main() -> int:
         path = os.path.join(args.output_dir, f"{filename}.csv")
         write_csv(path, resampled)
         _log(f"Saved {len(resampled)} samples to {path}")
+        if args.write_svg:
+            svg_path = os.path.join(args.output_dir, f"{filename}.svg")
+            write_svg(svg_path, resampled, market.title)
+            _log(f"Saved SVG chart to {svg_path}")
+        if args.write_html:
+            html_path = os.path.join(args.output_dir, f"{filename}.html")
+            write_html(html_path, resampled, market.title)
+            _log(f"Saved HTML chart to {html_path}")
         if args.sleep:
             time.sleep(args.sleep)
 
